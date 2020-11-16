@@ -1,0 +1,252 @@
+---
+title: "EDA"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+```{r}
+OG <- read.csv("~/Data/CollegeTM2018.csv")
+
+TM <- OG
+
+library(lme4)
+library(tidyverse)
+```
+
+Part 1
+
+```{r}
+#map hit types to run values from
+#https://rfrey22.medium.com/collegiate-linear-weights-f0237cf40451
+#this is our response variable
+
+TM <- TM%>%
+  filter(!PlayResult == "Undefined")%>%
+  mutate(runval = ifelse(
+    PlayResult == "Single", 0.94, ifelse(
+      PlayResult == "Double", 1.34, ifelse(
+        PlayResult == "Triple", 1.67, ifelse(
+          PlayResult == "HomeRun", 2.08, 0)))))%>%
+  select(runval, ExitSpeed, Angle, Direction, Distance,
+         PitcherId, BatterId, Stadium)
+
+summary(TM)
+```
+
+a)
+```{r}
+#There are a ton of pitches that did not result in batted balls or had no recorded Exit Speeds, so they will be removed.
+
+TM.clean <- TM%>%
+  filter(!is.na(ExitSpeed))
+
+#we want the ID variables to be factors, not numeric
+TM.clean$PitcherId = as.factor(TM.clean$PitcherId)
+TM.clean$BatterId = as.factor(TM.clean$BatterId)
+
+summary(TM.clean)
+```
+
+b)
+
+```{r}
+#Data Exploration
+
+hist(TM.clean$runval)
+hist(TM.clean$ExitSpeed)
+hist(TM.clean$Angle)
+hist(TM.clean$Direction)
+hist(TM.clean$Distance)
+table(OG$HitType[OG$HitType != "Undefined"])/ 
+  length(OG$HitType[OG$HitType != "Undefined"])
+```
+
+
+```{r}
+length(unique(TM.clean$Stadium))
+length(unique(TM.clean$BatterId))
+length(unique(TM.clean$PitcherId))
+
+```
+
+
+c) Pairs of Variables
+```{r}
+plot(TM.clean$runval, TM.clean$ExitSpeed)
+plot(TM.clean$ExitSpeed, TM.clean$Angle)
+plot(TM.clean$Distance, TM.clean$Angle)
+plot(TM.clean$Angle, TM.clean$Direction)
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+# sample = sample(TM.clean$BatterId, size = 10)
+# TM.clean_sample = TM.clean[(TM.clean$BatterId %in% sample),]
+
+boxplot(TM.clean$Angle ~ TM.clean$Stadium)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+mod1 <- lm(runval ~ ExitSpeed + Angle + Direction + Distance, data = TM.clean)
+summary(mod1)
+regclass::VIF(mod1)
+AIC(mod1)
+```
+
+The model with only fixed effects had all 4 variables significant with no multicollinearity concerns.
+
+
+```{r}
+# sample = sample(nrow(TM.clean), size = 10000)
+# TM.clean_sample = TM.clean[sample,]
+
+# model1 <- lmer(runval ~ I(ExitSpeed - mean(TM$ExitSpeed)) + Angle +
+#                  Direction + Distance +
+#     (1 | PitcherId) +  (1 | BatterId) + (1 | Stadium), data = TM.clean)
+
+model1_ints <- lmer(runval ~ ExitSpeed + Angle + Direction + Distance + (1|BatterId), data = TM.clean)
+summary(model1_ints)
+
+AIC(model1_ints)
+
+```
+
+Allowing for random intercepts alone for BatterId does not help us and in fact increased AIC a bit
+
+
+```{r}
+mod2_ints2 <- lmer(runval ~ ExitSpeed + Angle + Direction + Distance + (1|BatterId/Stadium), data = TM.clean)
+
+summary(mod2_ints2)
+
+AIC(mod2_ints2)
+```
+
+Three level model with BatterId at level 2 and Stadium at level 3 was an improvement over the last model but not over the entirely fixed model.
+
+
+```{r}
+mod2_ints3 <- lmer(runval ~ ExitSpeed + Angle + Direction + Distance + (1|Stadium), data = TM.clean)
+
+summary(mod2_ints3)
+
+AIC(mod2_ints3)
+```
+
+A 2 level model with StadiumId random intercepts is our best random effects model yet, but still is not better than the fixed model.
+
+```{r}
+TM.clean = TM.clean%>%
+  mutate(ES.c = ExitSpeed - mean(ExitSpeed))
+
+mod3 <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | Stadium), data = TM.clean)
+
+summary(mod3)
+
+AIC(mod3)
+```
+
+A 2 level model with stadiumId random intercepts and centered Exit Speed random slopes is our best model yet and is better than the fixed model by AIC
+
+```{r}
+mod3b <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | BatterId/Stadium), data = TM.clean)
+
+summary(mod3b)
+
+AIC(mod3b)
+BIC(mod3b)
+```
+
+Again, best model yet with 3 levels (hits within batter within stadium) and allowing exit speed to vary at batter and stadium level.
+
+```{r}
+mod3c <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c + Distance | BatterId/Stadium), data = TM.clean)
+
+summary(mod3c)
+
+AIC(mod3c)
+BIC(mod3c)
+```
+
+Adding Distance random slopes at the batter and stadium level did not help our model by BIC (barely helped by AIC). Considering Exit Speed shouldn't vary much at the stadium level, we will only allow Exit Speed slopes to vary at the batter level while leaving Distance to vary at the batter and stadium level. We will not calculate the cross level correlations  (hence the syntax).
+
+```{r}
+mod3d <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | BatterId) + (-1 + Distance|BatterId/Stadium) +
+                (1|Stadium) , data = TM.clean)
+
+summary(mod3d)
+
+AIC(mod3d)
+BIC(mod3d)
+```
+
+Best model yet for sure.
+
+See if adding Angle random slopes at batter level helps
+
+```{r}
+mod3e <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c + Angle | BatterId) + (-1 + Distance|BatterId/Stadium) + (1|Stadium) , data = TM.clean)
+
+summary(mod3e)
+
+AIC(mod3e)
+BIC(mod3e)
+```
+
+This is worse. Angle should not be allowed to vary at the batter level.
+
+Try adding Direction at level 2 and 3
+
+```{r}
+mod3f <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | BatterId) + (-1 + Distance + Direction|BatterId/Stadium) + (1|Stadium) , data = TM.clean)
+
+summary(mod3f)
+
+AIC(mod3f)
+BIC(mod3f)
+```
+
+Adding direction at level 2 and 3 was not helpful. We suspect just having Direction random slopes vary at the batter level will be better 
+
+```{r}
+mod3f2 <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c + Direction| BatterId) + (-1 + Distance |BatterId/Stadium) + (1|Stadium) , data = TM.clean)
+
+summary(mod3f2)
+
+AIC(mod3f2)
+BIC(mod3f2)
+```
+
+This is our best model so far (likely final).
+
+This is what Ethan thinks the syntax should be and doesn't understand the difference between this syntax and the syntax in mod3f2.
+
+```{r}
+mod3g <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | BatterId) + (1 + Distance + Direction|BatterId/Stadium) , data = TM.clean)
+
+summary(mod3g)
+
+AIC(mod3g)
+BIC(mod3g)
+```
