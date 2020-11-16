@@ -82,30 +82,17 @@ plot(TM.clean$Angle, TM.clean$Direction)
 
 
 
+PART 3: MODEL BUILDING
 
 
-
-
-
-
+Center Variables
 ```{r}
-# sample = sample(TM.clean$BatterId, size = 10)
-# TM.clean_sample = TM.clean[(TM.clean$BatterId %in% sample),]
-
-boxplot(TM.clean$Angle ~ TM.clean$Stadium)
+TM.clean = TM.clean%>%
+  mutate(ES.c = ExitSpeed - mean(ExitSpeed))
 ```
 
 
-
-
-
-
-
-
-
-
-
-
+Fixed effects only model (NULL)
 
 ```{r}
 mod1 <- lm(runval ~ ExitSpeed + Angle + Direction + Distance, data = TM.clean)
@@ -113,10 +100,21 @@ summary(mod1)
 regclass::VIF(mod1)
 AIC(mod1)
 ```
-
 The model with only fixed effects had all 4 variables significant with no multicollinearity concerns.
 
+Add interactions
+```{r}
+mod1a <- lm(runval ~ ES.c + Angle + Direction + Distance + 
+              ES.c:Angle + ES.c:Direction + ES.c:Distance +
+              Angle:Direction + Angle:Distance + Distance:Direction, data = TM.clean)
+summary(mod1a)
+#regclass::VIF(mod1a)
+AIC(mod1a)
+```
+Once we add interaction terms, the model improves a lot and four of the interaction terms are significant. We will ignore these for now while we figure out the random structure of our model and add these four terms back in at the end.
 
+
+RANDOM STRUCTURE
 ```{r}
 # sample = sample(nrow(TM.clean), size = 10000)
 # TM.clean_sample = TM.clean[sample,]
@@ -131,7 +129,6 @@ summary(model1_ints)
 AIC(model1_ints)
 
 ```
-
 Allowing for random intercepts alone for BatterId does not help us and in fact increased AIC a bit
 
 
@@ -157,8 +154,7 @@ AIC(mod2_ints3)
 A 2 level model with StadiumId random intercepts is our best random effects model yet, but still is not better than the fixed model.
 
 ```{r}
-TM.clean = TM.clean%>%
-  mutate(ES.c = ExitSpeed - mean(ExitSpeed))
+
 
 mod3 <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | Stadium), data = TM.clean)
 
@@ -230,7 +226,10 @@ BIC(mod3f)
 Adding direction at level 2 and 3 was not helpful. We suspect just having Direction random slopes vary at the batter level will be better 
 
 ```{r}
-mod3f2 <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c + Direction| BatterId) + (-1 + Distance |BatterId/Stadium) + (1|Stadium) , data = TM.clean)
+mod3f2 <- lmer(runval ~ ES.c + Angle + Direction + Distance + 
+                 (1 + ES.c + Direction| BatterId) + 
+                 (-1 + Distance |BatterId/Stadium) + 
+                 (1|Stadium), data = TM.clean)
 
 summary(mod3f2)
 
@@ -240,13 +239,50 @@ BIC(mod3f2)
 
 This is our best model so far (likely final).
 
-This is what Ethan thinks the syntax should be and doesn't understand the difference between this syntax and the syntax in mod3f2.
+Rearrange terms for more parsimony?
+```{r}
+mod3h <- lmer(runval ~ ES.c + Angle + Direction + Distance + 
+                (1 + Distance +  ES.c | BatterId) + 
+                (1  + Direction|BatterId/Stadium) , data = TM.clean)
+
+summary(mod3h)
+
+AIC(mod3h)
+BIC(mod3h)
+```
+This rearrangement of terms did not help the model and hurt it pretty badly. We are satisfied with the previous model as being our best. Now we will add those interaction terms back in.
+
+
+Add significicant interactions back in from earlier
 
 ```{r}
-mod3g <- lmer(runval ~ ES.c + Angle + Direction + Distance + (1 + ES.c | BatterId) + (1 + Distance + Direction|BatterId/Stadium) , data = TM.clean)
 
-summary(mod3g)
+mod4 <- lmer(runval ~ ES.c + Angle + Direction + Distance + 
+              ES.c:Angle  + ES.c:Distance + Angle:Distance + Distance:Direction +
+                 (1 + ES.c + Direction| BatterId) + 
+                 (-1 + Distance |BatterId/Stadium) + 
+                 (1|Stadium), data = TM.clean)
 
-AIC(mod3g)
-BIC(mod3g)
+summary(mod4)
+AIC(mod4)
 ```
+
+This is by far our best model
+
+Remove insignifcant terms (just ES.c)
+```{r}
+mod4a <- lmer(runval ~ Angle + Direction + Distance + 
+              ES.c:Angle  + ES.c:Distance + Angle:Distance + Distance:Direction +
+                 (1 + ES.c + Direction| BatterId) + 
+                 (-1 + Distance |BatterId/Stadium) + 
+                 (1|Stadium), data = TM.clean)
+
+summary(mod4a)
+AIC(mod4a)
+```
+
+This hurt the model. Our final model will be model 4.
+
+
+
+
